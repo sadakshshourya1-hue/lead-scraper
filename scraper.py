@@ -2,74 +2,118 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import re
+from datetime import datetime
 
-url = input("Enter website URL: ").strip()
+# Browser headers
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/137.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "en-US,en;q=0.9",
+}
 
-if not url.startswith(("http://", "https://")):
-    url = "https://" + url
+results = []
 
+# Read websites
 try:
-    response = requests.get(
-        url,
-        timeout=10,
-        headers={
-            "User-Agent": "Mozilla/5.0"
-        }
-    )
+    with open("urls.txt", "r") as file:
+        urls = [line.strip() for line in file if line.strip()]
+except FileNotFoundError:
+    print("urls.txt not found!")
+    exit()
 
-    response.raise_for_status()
+if not urls:
+    print("urls.txt is empty!")
+    exit()
 
-    soup = BeautifulSoup(response.text, "html.parser")
-    html = response.text
+successful = 0
+failed = 0
 
-    title = soup.title.string.strip() if soup.title else "No Title"
+for url in urls:
 
-    # Emails
-    emails = sorted(list(set(re.findall(
-        r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
-        html
-    ))))
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
 
-    instagram = ""
-    linkedin = ""
-    facebook = ""
-    contact_page = ""
+    try:
+        response = requests.get(
+            url,
+            headers=HEADERS,
+            timeout=15,
+            allow_redirects=True
+        )
 
-    for link in soup.find_all("a", href=True):
+        response.raise_for_status()
 
-        href = link["href"]
+        final_url = response.url
 
-        if href.startswith("/"):
-            href = url.rstrip("/") + href
+        soup = BeautifulSoup(response.text, "html.parser")
+        html = response.text
 
-        if "instagram.com" in href:
-            instagram = href
+        title = soup.title.string.strip() if soup.title else "No Title"
 
-        elif "linkedin.com" in href:
-            linkedin = href
+        emails = sorted(set(re.findall(
+            r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}",
+            html
+        )))
 
-        elif "facebook.com" in href:
-            facebook = href
+        instagram = "Not Found"
+        linkedin = "Not Found"
+        facebook = "Not Found"
+        contact = "Not Found"
 
-        if "contact" in href.lower():
-            contact_page = href
+        for tag in soup.find_all("a", href=True):
 
-    data = {
-        "Company": [title],
-        "Website": [url],
-        "Emails": [", ".join(emails) if emails else "Not Found"],
-        "Instagram": [instagram if instagram else "Not Found"],
-        "LinkedIn": [linkedin if linkedin else "Not Found"],
-        "Facebook": [facebook if facebook else "Not Found"],
-        "Contact Page": [contact_page if contact_page else "Not Found"]
-    }
+            href = tag["href"]
 
-    df = pd.DataFrame(data)
+            if href.startswith("/"):
+                href = final_url.rstrip("/") + href
 
-    df.to_csv("leads.csv", index=False)
+            href_lower = href.lower()
 
-    print("\nLead saved successfully!\n")
+            if "instagram.com" in href_lower:
+                instagram = href
+
+            elif "linkedin.com" in href_lower:
+                linkedin = href
+
+            elif "facebook.com" in href_lower:
+                facebook = href
+
+            if "contact" in href_lower:
+                contact = href
+
+        results.append({
+            "Date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "Company": title,
+            "Website": final_url,
+            "Emails": ", ".join(emails) if emails else "Not Found",
+            "Email Count": len(emails),
+            "Instagram": instagram,
+            "LinkedIn": linkedin,
+            "Facebook": facebook,
+            "Contact Page": contact
+        })
+
+        successful += 1
+        print(f"✔ Successfully scraped: {final_url}")
+
+    except Exception as e:
+        failed += 1
+        print(f"✖ Failed: {url}")
+        print(f"  Reason: {e}")
+
+# Save CSV
+df = pd.DataFrame(results)
+df.to_csv("leads.csv", index=False)
+
+print("\n========== SUMMARY ==========")
+print(f"Total Websites : {len(urls)}")
+print(f"Successful     : {successful}")
+print(f"Failed         : {failed}")
+print("CSV Saved As   : leads.csv")
+print("=============================\n")
+
+if not df.empty:
     print(df)
-
-except Exception as e:
-    print("Error:", e)
